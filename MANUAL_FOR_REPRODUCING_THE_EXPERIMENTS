@@ -1,0 +1,216 @@
+#######################################################################
+||                                                                   ||
+||                                                                   ||
+||                              MANUAL                               ||
+||                                                                   ||
+||                                                                   ||
+#######################################################################
+
+
+This is the manual for reproducing the results from "TCR: Topologically Consistent Reweighting for XGBoost in Regression Tasks". The "tcr" directory contains all necessary files, installation and execution instructions, which we detail below. The "AXIL" directory contains a file from: https://github.com/pgeertsema/AXIL_paper/tree/main
+
+
+
+#################################################
+||                                             ||
+||      Installation / Environment Setup       ||
+||                                             ||
+#################################################
+
+
+0. The entire TCR pipeline produces multiple files along the way that are stored in separate directories. To create the necessary infrastructure, run the "create_infrastructure.sh" shell script from inside the tcr directory:
+
+<sh create_infrastructure.sh>
+
+
+1. Set up the tcr conda environment. For this, run the following command:
+
+<conda env create -f tcr.yml>
+
+
+2. To run jobs in this environment, activate it with:
+
+<conda activate tcr>
+
+
+
+
+
+###########################################################
+||                                                       ||
+||               Running the Data Pipeline               ||
+||                                                       ||
+###########################################################
+
+To calculate the robustness values, run the "data_pipeline.py" script. This script takes two arguments:
+
+- SET_NAME (Str): The name of the set which is loaded from the "dataset_provider.py" script in the Utils directory.
+- ITERATOR (Int): The random seed for the run.
+
+Example command: <python3 data_pipeline.py Diabetes 42>
+
+!!!ADDON!!!
+###########
+If you want to calculate the robustness values for a subset only and infer the remaining values via a nearest neighbour approach (see Algorithm 2 in the article), set the <MAX_SAM_SIZE> in the script header to the desired sample size. The default value is <-1>, which corresponds to using the entire data. Note that this only applies to calculating the robustness values of the training set.
+###########
+!!!ADDON!!!
+
+By default, the robustness values of the training set and the test set are determined. Likewise, the input data for both the weighted misalignment heatmaps and the adversarial validation comparison are calculated. However, the calculations can be restricted by setting the corresponding variables ("CALCULATE_ROBUSTNESS_LISTS", "COMPUTE_COS_SIM_MATRIX", "ADVERSARIAL_VALIDATION") in the script head to "False". To simulate random splits (and not splits determined by robustness values), set the "RANDOMISING_LISTS" variable to "True" (it is "False" by default). This will shuffle the robustness values which will lead to "random" splits.
+
+
+
+
+
+###########################################################
+||                                                       ||
+||        Visualising the Data Analyses' Results         ||
+||                                                       ||
+###########################################################
+
+To visualise the results from the previous step, run the "data_analysis_display.py" script. This script takes one argument:
+
+- SET_NAME (Str): The name of the set which is loaded from the "dataset_provider.py" script in the Utils directory.
+
+Example command: <python3 data_analysis_display.py Diabetes>
+
+Because this script combines results from multiple runs, the script header has a variable ("X_VAL_LIST") that holds a list of all random seeds for which results are included. Similarly, one can include/exclude visualisation methods by setting the corresponding variables ("ROBUSTNESS_LISTS", "COSINE_SIMILARITY_HEATMAPS", "ADVERSARIAL_VALIDATION") to "True" (default)/"False", respectively. To split the weighted misalignment heatmaps along the diagonal (so that the results based on random splits are included), set the "SPLIT_IN_HALF" variable to "True" (default). To use only the results based on random splits, set the "USE_RANDOM_RESULTS" variable to "True" (default is "False").
+
+The graphics are saved as ".png"-files; the statistics from the adversarial validation results are printed to the console (including a latex tabular-friendly format).
+
+
+
+
+
+###########################################################
+||                                                       ||
+||               Running the H2O Pipeline                ||
+||                                                       ||
+###########################################################
+
+To run the hyperparameter search with H2O, run the "automl_pipeline.py" script. This script takes two arguments:
+
+- SET_NAME (Str): The name of the set which is loaded from the "dataset_provider.py" script in the Utils directory.
+- ITERATOR (Int): The random seed for the run.
+
+Example command: <python3 automl_pipeline.py Diabetes 42>
+
+!!!ADDON!!!
+###########
+This script requires the list of robustness values calculated from the entire data for both the training and test sets to order the predictions. If you do not want to calculate these lists beforehand, you can simply create dummy arrays, e.g. via:
+
+<np.array([0.0]*len_train, dtype="float32")>,
+<np.arange(len_train)>
+<np.array([0.0]*len_test, dtype="float32")>
+<np.arange(len_test)>
+
+Note that the test arrays need to be the same when using any of the reweighting techniques in the tcr_pipeline.py script to have a consistent order of elements.
+###########
+!!!ADDON!!!
+
+This will produce the XGBoost regressors with optimised hyperparameters (given a time budget of 3 hours). IMPORTANT: Before running this script, you need to calculate the robustness values via the "data_pipeline.py" script because the training and test frames are saved in the order defined by the robustness values. This facilitates the reweighting process in the next script, where we load not only the XGBoost models (more precisely, their hyperparameters) but their training and test data.
+
+
+
+
+
+###################################################################
+||                                                               ||
+||  Running the TCR Pipeline (Incl. Other Reweighting Methods)   ||
+||                                                               ||
+###################################################################
+
+
+To run the TCR pipeline (retraining models with adjusted weights), run the "tcr_pipeline.py" script. This script takes four arguments:
+
+- SET_NAME (Str): The name of the set which is loaded from the "dataset_provider.py" script in the Utils directory.
+- ITERATOR (Int): The random seed for the run.
+- METHOD (Str): The reweighting method. Choose one in { "DENSEWEIGHT", "SMOGN", "AXIL", "TCR" }.
+- KEY (Int): The index for the list containing method-specific hyperparameters (alpha for DenseWeight and lambda for TCR). Set this to "0" for "SMOGN" and "AXIL".
+
+
+!!!ADDON!!!
+###########
+This script uses two new arguments now:
+
+- MAX_SAM_SIZE_KEY (Int): The index of the list value that holds the sample size used in the data_pipeline.py script. The list is found in the script header and can be adjusted. The value <-1> corresponds to the robustness values calculated from the entire data. Using a list-index-argument approach allows streamlining the evaluation across several arguments.
+- TCR_PERCENTAGE_KEY (Int): The index of the list value that holds the TCR threshold, that is, the amount of elements that are reweighted (we used thresholds of 0.05, 0.1 and 0.2 in our experiments). As before, using a list-index-argument approach allows streamlining the evaluation across several arguments.
+
+If you want to use other values, simply change the list entries and the corresponding indices (i.e. the script arguments). If you want to use any other method, simply provide dummy values (they are disregarded whenever "METHOD != TCR").
+###########
+!!!ADDON!!!
+
+
+Example command: <python3 tcr_pipeline.py Diabetes 42 TCR 8 0 0>
+
+^ The list of parameters for DenseWeight is: [0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0]
+^ The list of parameters for TCR is: [0.95, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1]
+
+These lists can be adjusted to one's liking. For compatibility with job factories (running multiple jobs with arguments provided by some for loop), the KEY argument is the index (!) of the list, not the parameter itself. This has the additional advantage of defining more complex combinations of parameters as for "SMOGN".
+
+
+
+
+
+###################################################################
+||                                                               ||
+||    Display the Comparison Between the Reweighting Methods     ||
+||                                                               ||
+###################################################################
+
+To visualise the comparison between the different reweighting methods, run the "stat_comparison_display.py" script. This script takes no arguments, but several variables can be set in the header. First, you can decide whether to display the heatmaps or the boxplots by setting the variables ("HEATMAP" and "BOXPLOTS", respectively) to "True". When displaying the heatmaps, you can also select whether to include the performances for the optimal parameters by setting the variable "INCLUDE_BEST" to "True" (default). Furthermore, you can change the default weighting parameters for DenseWeight and TCR (we used the conservative alpha=0.1 and lambda=0.9 for DenseWeight and TCR, respectively). Finally, the list "X_VAL_LIST" contains the random seeds for which the results are included in the calculations (similar to "data_analysis_display.py", see above).
+
+NOTE: To select specific datasets that should be displayed, simply comment out the remaining ones in the "SET_NAME_LIST" list.
+
+
+!!!ADDON!!!
+###########
+This script uses two new arguments now:
+
+- MAX_SAM_SIZE (Str): The value in {"all", "_<sample_size>"} that holds the sample size used in the data_pipeline.py script. If you want to use the results when using the robustness values calculated from the entire data, set this to "all"; otherwise set this to the sample size with an additional underscore, for example, <_5000>, for a subset size of 5000 elements.
+
+- LEAST_ROB_PERCENTAGE (Str): The value in {"_<tcr_threshold>"} that determines which portion of the least robust results have been reweighted. If you used a threshold value of <0.1> in the tcr_pipeline.py script for TCR, for example, then set this to <_0.1>.
+
+###########
+!!!ADDON!!!
+
+Example command: <python3 stat_comparison_display.py all _0.1>
+
+
+
+
+!!!ADDON!!!
+###########
+###################################################################
+||                                                               ||
+||        Display the Scaling and Sensitivity Comparison         ||
+||                                                               ||
+###################################################################
+
+
+To visualise the scaling and sensitivity comparisons, run the <scaling_comparison_display.py> and the <sensitivity_comparison_display.py> scripts. To run these, the TCR results for all weight factors and at least one TCR threshold "LEAST_ROB_PERCENTAGE" (we used 0.05, 0.1, 0.2) and one subset size "MAX_SAM_SIZE" (we used the entire set and subsets of 5000, 10000, 20000, 50000 elements) need to exist. The scripts do not require any command line arguments; all variables are set in the script. Again, the list "X_VAL_LIST" contains the random seeds for which the results are included in the calculations.
+
+For the first script, you can select the <LEAST_ROB_PERCENTAGE> and the particular dataset similar to the <stat_comparison_display.py> script in the header. You can then set the list of <MAX_SAM_SIZE> values to consider in line 80. The empty string <""> corresponds to the results based on the robustness values calculated from the entire data.
+
+For the second script, you can select the <MAX_SAM_SIZE> (the empty string <""> corresponds to the results based on the robustness values calculated from the entire data) and the particular dataset similar to the <stat_comparison_display.py> script in the script header. You can then set the list of <LEAST_ROB_PERCENTAGE> values to consider in line 81. Also, if you use other values for <LEAST_ROB_PERCENTAGE> than [0.05, 0.1, 0.2], the <xticklabels> in lines 189, 190, 191 need to be adjusted.
+
+
+Example commands: <python3 scaling_comparison_display.py> and <python3 sensitivity_comparison_display.py>
+
+###########
+!!!ADDON!!!
+
+
+
+
+
+
+
+###################################################
+||                                               ||
+||         Extension to Custom Datasets          ||
+||                                               ||
+###################################################
+
+All of the above can also be run with custom datasets. For this, simply add another entry in the "dataset_provider.py" script in the same format. The "NR_BINS" argument defines into how many bins the targets should be distributed to allow stratified training/test splits. Select this value based on the number of samples or unique target values in the dataset.
+
+
